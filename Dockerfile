@@ -1,10 +1,10 @@
-FROM python:3.10
+FROM ubuntu:latest
 
 WORKDIR /app
 
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y software-properties-common && \
-    RUN sed -i 's/^#\s*\(deb.*universe\)$/\1/g' /etc/apt/sources.list && \
+    sed -i 's/^#\s*\(deb.*universe\)$/\1/g' /etc/apt/sources.list && \
     add-apt-repository universe && \
     apt-get update && \
     apt-get install -y libta-lib-dev && \
