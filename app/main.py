@@ -76,9 +76,11 @@ def get_current_price(symbol):
 
 @app.get("/prediction", response_model=PredictionResponse)
 async def get_prediction(
-    symbol: str = Query(..., description="The symbol to make predictions for"),
-    market: str = Query(..., description="The market the symbol belongs to (e.g. forex, crypto, metals, nasdaq, nyse)"),
-    timeframe: str = Query("15min", description="The timeframe for the candlestick data (e.g. 1min, 5min, 15min, 30min, 60min)"),
+        symbol: str = Query(..., description="The symbol to make predictions for"),
+        market: str = Query(...,
+                            description="The market the symbol belongs to (e.g. forex, crypto, metals, nasdaq, nyse)"),
+        timeframe: str = Query("15min",
+                               description="The timeframe for the candlestick data (e.g. 1min, 5min, 15min, 30min, 60min)"),
 ):
     # get candles data
     try:
@@ -99,13 +101,29 @@ async def get_prediction(
         except AlphaVantageError as e:
             return JSONResponse(status_code=500, content={"detail": str(e)})
 
+            # get RSI
+        try:
+            url = f"https://www.alphavantage.co/query?function=RSI&symbol={symbol}&interval={timeframe}&time_period=14&series_type=close&apikey={API_KEY}"
+            response = requests.get(url)
+            json_data = response.json()
+
+            if "Technical Analysis: RSI" not in json_data:
+                raise AlphaVantageError(
+                    "Could not fetch RSI data from AlphaVantage. Check your API key and rate limits.")
+
+            rsi_data = json_data["Technical Analysis: RSI"]
+            latest_rsi = list(rsi_data.values())[0]
+            rsi = float(latest_rsi["RSI"])
+
+        except AlphaVantageError as e:
+            return JSONResponse(status_code=500, content={"detail": str(e)})
+
         consolidation_price = (ema_short + ema_long) / 2
 
         last_news = None
 
         # determine trading signal
-        # determine trading signal
-        rsi = pta.rsi(pd.Series([current_price]), length=14).iloc[-1]
+
         if current_price > consolidation_price and macd > macd_signal and rsi > 50:
             signal = 'buy'
         elif current_price < consolidation_price and macd < macd_signal and rsi < 50:
@@ -140,4 +158,3 @@ async def get_prediction(
 
     except AlphaVantageError as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
-
