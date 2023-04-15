@@ -1,6 +1,6 @@
 import requests
 import json
-
+from fastapi import HTTPException
 from fastapi import FastAPI
 from alpha_vantage.timeseries import TimeSeries
 from alpha_vantage.techindicators import TechIndicators
@@ -16,14 +16,16 @@ ti = TechIndicators(key=api_key)
 
 @app.get("/trade_signal/{symbol}/{timeframe}")
 async def trade_signal(symbol: str, timeframe: str):
-    current_price, rsi, macd, macd_signal, ema = await get_market_data(symbol, timeframe)
-    support, resistance = calculate_support_resistance(symbol)
-    market = determine_market_trend(current_price, ema, support, resistance)
-    signal, take_profit, stop_loss, consolidation_price = strategy(symbol, market, current_price, rsi, macd,
-                                                                   macd_signal, support, resistance)
-
-    latest_cpi, latest_nfp = get_cpi_nfp_data()
-    cpi_nfp_impact = analyze_cpi_nfp_impact(latest_cpi, latest_nfp)
+    try:
+        current_price, rsi, macd, macd_signal, ema = await get_market_data(symbol, timeframe)
+        support, resistance = calculate_support_resistance(symbol)
+        market = determine_market_trend(current_price, ema, support, resistance)
+        signal, take_profit, stop_loss, consolidation_price = strategy(symbol, market, current_price, rsi, macd,
+                                                                       macd_signal, support, resistance)
+        latest_cpi, latest_nfp = get_cpi_nfp_data()
+        cpi_nfp_impact = analyze_cpi_nfp_impact(latest_cpi, latest_nfp)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     response = {
         'symbol': symbol,
@@ -116,3 +118,10 @@ def get_cpi_nfp_data():
     latest_nfp = float(nfp_data['Nonfarm_Payroll'][0])
 
     return latest_cpi, latest_nfp
+
+
+def analyze_cpi_nfp_impact(cpi, nfp):
+    cpi_impact = "positive" if cpi > 0 else "negative"
+    nfp_impact = "positive" if nfp > 0 else "negative"
+
+    return {"cpi_impact": cpi_impact, "nfp_impact": nfp_impact}
