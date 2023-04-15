@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from alpha_vantage.timeseries import TimeSeries
 from alpha_vantage.techindicators import TechIndicators
-from alpha_vantage.newsapi import NewsApi
+from alpha_vantage.economic_indicator import EconomicIndicator
 import pandas as pd
 import numpy as np
 
@@ -10,16 +10,19 @@ api_key = "B5RQI94JSMH0JOPU"
 
 ts = TimeSeries(key=api_key)
 ti = TechIndicators(key=api_key)
-newsapi = NewsApi(key=api_key)
+ei = EconomicIndicator(key=api_key)
 
 
 @app.get("/trade_signal/{symbol}/{timeframe}")
 async def trade_signal(symbol: str, timeframe: str):
-    current_price, rsi, macd, macd_signal, ema, last_news = await get_market_data(symbol, timeframe)
+    current_price, rsi, macd, macd_signal, ema = await get_market_data(symbol, timeframe)
     support, resistance = calculate_support_resistance(symbol)
     market = determine_market_trend(current_price, ema, support, resistance)
     signal, take_profit, stop_loss, consolidation_price = strategy(symbol, market, current_price, rsi, macd,
-                                                                   macd_signal)
+                                                                   macd_signal, support, resistance)
+
+    latest_cpi, latest_nfp = get_cpi_nfp_data()
+    cpi_nfp_impact = analyze_cpi_nfp_impact(latest_cpi, latest_nfp)
 
     response = {
         'symbol': symbol,
@@ -34,7 +37,9 @@ async def trade_signal(symbol: str, timeframe: str):
         'stop_loss': stop_loss,
         'support': support,
         'resistance': resistance,
-        'last_news': last_news
+        'cpi': latest_cpi,
+        'nfp': latest_nfp,
+        'cpi_nfp_impact': cpi_nfp_impact
     }
 
     return response
@@ -50,9 +55,8 @@ async def get_market_data(symbol, timeframe):
     macd_signal = float(data['MACD_Signal'])
     data, _ = ti.get_ema(symbol, interval=timeframe)
     ema = float(data['EMA'])
-    last_news = newsapi.get_last_news(symbol)
 
-    return current_price, rsi, macd, macd_signal, ema, last_news
+    return current_price, rsi, macd, macd_signal, ema
 
 
 def calculate_support_resistance(symbol):
@@ -76,13 +80,13 @@ def determine_market_trend(current_price, ema, support, resistance):
         return 'consolidation'
 
 
-def strategy(symbol, market, current_price, rsi, macd, macd_signal):
-    consolidation_price = 0
-    signal = None
-    take_profit = 0
-    stop_loss = 0
+def strategy(symbol, market, current_price, rsi, macd, macd_signal, support, resistance):
+    signal, take_profit, stop_loss, consolidation_price = None, None, None, None
 
-    support, resistance = calculate_support_resistance(symbol)
+    if market == 'consolidation':
+        consolidation_price = (support + resistance) / 2
+        return signal, take_profit, stop_loss, consolidation_price
+
     sniper_range = 0.005
 
     if market == 'upside' and (current_price - support) / support < sniper_range:
@@ -95,3 +99,20 @@ def strategy(symbol, market, current_price, rsi, macd, macd_signal):
         stop_loss = current_price * 1.01
 
     return signal, take_profit, stop_loss, consolidation_price
+
+
+def get_cpi_nfp_data():
+    cpi_data, _ = ei.get_cpi(interval='monthly')
+    nfp_data, _ = ei.get_nonfarm_payroll()
+
+    latest_cpi = float(cpi_data['CPI'][0])
+    latest_nfp = float(nfp_data['Nonfarm_Payroll'][0])
+
+    return latest_cpi, latest_nfp
+
+
+def analyze_cpi_nfp_impact(cpi, nfp):
+    cpi_impact = "positive" if cpi > 0 else "negative"
+    nfp_impact = "positive" if nfp > 0 else "negative"
+
+    return {"cpi_impact": cpi_impact, "nfp_impact": nfp_impact}
