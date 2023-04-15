@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y software-properties-common && \
+    RUN sed -i 's/^#\s*\(deb.*universe\)$/\1/g' /etc/apt/sources.list && \
     add-apt-repository universe && \
     apt-get update && \
     apt-get install -y libta-lib-dev && \
@@ -11,8 +12,9 @@ RUN apt-get update && apt-get upgrade -y && \
 
 COPY requirements.txt .
 
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+RUN pip install --upgrade pip
+
+RUN pip install -r requirements.txt
 
 COPY app app
 
