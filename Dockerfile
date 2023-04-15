@@ -6,7 +6,8 @@ RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y software-properties-common && \
     add-apt-repository universe && \
     apt-get update && \
-    apt-get install -y libta-lib-dev
+    apt-get install -y libta-lib-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
