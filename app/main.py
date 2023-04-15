@@ -4,10 +4,14 @@ import pandas as pd
 import pandas_ta as pta
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
+
+
+class AlphaVantageError(Exception):
+    pass
 
 
 class PredictionResponse(BaseModel):
@@ -27,7 +31,13 @@ class PredictionResponse(BaseModel):
 def get_candles(symbol, timeframe):
     url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={timeframe}&outputsize=full&apikey=B5RQI94JSMH0JOPU"
     response = requests.get(url)
-    data = response.json()['Time Series ({})'.format(timeframe)]
+    json_data = response.json()
+    time_series_key = f'Time Series ({timeframe})'
+
+    if time_series_key not in json_data:
+        raise AlphaVantageError("Could not fetch data from AlphaVantage. Check your API key and rate limits.")
+
+    data = json_data[time_series_key]
     data = {datetime.fromisoformat(k): {k2.split()[-1]: float(v2) for k2, v2 in v.items()} for k, v in data.items()}
     data = pd.DataFrame.from_dict(data, orient='index')
     data.sort_index(inplace=True)
@@ -80,54 +90,63 @@ def get_news(symbol, market):
 
 
 @app.get("/prediction", response_model=PredictionResponse)
-def get_prediction(symbol: str = Query(..., description="The symbol to make predictions for"), market
-: str = Query(..., description="The market the symbol belongs to (e.g. forex, crypto, metals, nasdaq, nyse)")):
+async def get_prediction(
+    symbol: str = Query(..., description="The symbol to make predictions for"),
+    market: str = Query(..., description="The market the symbol belongs to (e.g. forex, crypto, metals, nasdaq, nyse)"),
+    timeframe: str = Query("15min", description="The timeframe for the candlestick data (e.g. 1min, 5min, 15min, 30min, 60min)"),
+):
     # get candles data
-    candles = get_candles(symbol, "15min")
-    closes = candles['close'].values.astype(float)
-    candles['close'] = closes
+    try:
+        candles = get_candles(symbol, timeframe)
+        closes = candles['close'].values.astype(float)
+        candles['close'] = closes
 
-    # calculate indicators
-    macd = pta.macd(candles['close'], fastperiod=12, slowperiod=26, signalperiod=9)
-    ema_short = pta.ema(candles['close'], length=50).iloc[-1]
-    ema_long = pta.ema(candles['close'], length=100).iloc[-1]
-    current_price = closes[-1]
-    consolidation_price = (ema_short + ema_long) / 2
+        macd = pta.macd(candles['close'], fastperiod=12, slowperiod=26, signalperiod=9)
+        ema_short = pta.ema(candles['close'], length=50).iloc[-1]
+        ema_long = pta.ema(candles['close'], length=100).iloc[-1]
+        current_price = closes[-1]
+        consolidation_price = (ema_short + ema_long) / 2
 
-    # get news data
-    news = get_news(symbol, market)
-    last_news = news[0] if len(news) > 0 else None
+        # get news data
+        news = get_news(symbol, market)
+        last_news = news[0] if len(news) > 0 else None
 
-    # determine trading signal
-    rsi = pta.rsi(candles['close'], length=14).iloc[-1]
-    if current_price > consolidation_price and macd.iloc[-1]['MACD_12_26_9'] > macd.iloc[-1]['SIGNAL_12_26_9'] and rsi > 50:
-        signal = 'buy'
-    elif current_price < consolidation_price and macd.iloc[-1]['MACD_12_26_9'] < macd.iloc[-1]['SIGNAL_12_26_9'] and rsi < 50:
-        signal = 'sell'
-    else:
-        signal = 'hold'
+        # determine trading signal
+        rsi = pta.rsi(candles['close'], length=14).iloc[-1]
+        if current_price > consolidation_price and macd.iloc[-1]['MACD_12_26_9'] > macd.iloc[-1][
+            'SIGNAL_12_26_9'] and rsi > 50:
+            signal = 'buy'
+        elif current_price < consolidation_price and macd.iloc[-1]['MACD_12_26_9'] < macd.iloc[-1][
+            'SIGNAL_12_26_9'] and rsi < 50:
+            signal = 'sell'
+        else:
+            signal = 'hold'
 
-    # calculate take profit and stop loss
-    if signal in ('buy', 'sell'):
-        take_profit = current_price * 1.06
-        stop_loss = current_price * 0.97
-    else:
-        take_profit = None
-        stop_loss = None
+        # calculate take profit and stop loss
+        if signal in ('buy', 'sell'):
+            take_profit = current_price * 1.06
+            stop_loss = current_price * 0.97
+        else:
+            take_profit = None
+            stop_loss = None
 
-    # construct response
-    response = {
-        'symbol': symbol,
-        'market': market,
-        'current_price': current_price,
-        'consolidation_price': consolidation_price,
-        'rsi': rsi,
-        'macd': macd.iloc[-1]['MACD_12_26_9'],
-        'macd_signal': macd.iloc[-1]['SIGNAL_12_26_9'],
-        'signal': signal,
-        'take_profit': take_profit,
-        'stop_loss': stop_loss,
-        'last_news': last_news
-    }
+        # construct response
+        response = {
+            'symbol': symbol,
+            'market': market,
+            'current_price': current_price,
+            'consolidation_price': consolidation_price,
+            'rsi': rsi,
+            'macd': macd.iloc[-1]['MACD_12_26_9'],
+            'macd_signal': macd.iloc[-1]['SIGNAL_12_26_9'],
+            'signal': signal,
+            'take_profit': take_profit,
+            'stop_loss': stop_loss,
+            'last_news': last_news
+        }
 
-    return response
+        return response
+
+    except AlphaVantageError as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
