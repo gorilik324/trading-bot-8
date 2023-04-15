@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timedelta
 import pandas as pd
-import talib
+import pandas_ta as pta
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
@@ -85,10 +85,12 @@ def get_prediction(symbol: str = Query(..., description="The symbol to make pred
     # get candles data
     candles = get_candles(symbol, "15min")
     closes = candles['close'].values.astype(float)
+    candles['close'] = closes
+
     # calculate indicators
-    macd, macdsignal, macdhist = talib.MACD(closes, fastperiod=12, slowperiod=26, signalperiod=9)
-    ema_short = talib.EMA(closes, timeperiod=50)[-1]
-    ema_long = talib.EMA(closes, timeperiod=100)[-1]
+    macd = pta.macd(candles['close'], fastperiod=12, slowperiod=26, signalperiod=9)
+    ema_short = pta.ema(candles['close'], length=50).iloc[-1]
+    ema_long = pta.ema(candles['close'], length=100).iloc[-1]
     current_price = closes[-1]
     consolidation_price = (ema_short + ema_long) / 2
 
@@ -97,10 +99,10 @@ def get_prediction(symbol: str = Query(..., description="The symbol to make pred
     last_news = news[0] if len(news) > 0 else None
 
     # determine trading signal
-    rsi = talib.RSI(closes, timeperiod=14)[-1]
-    if current_price > consolidation_price and macd[-1] > macdsignal[-1] and rsi > 50:
+    rsi = pta.rsi(candles['close'], length=14).iloc[-1]
+    if current_price > consolidation_price and macd.iloc[-1]['MACD_12_26_9'] > macd.iloc[-1]['SIGNAL_12_26_9'] and rsi > 50:
         signal = 'buy'
-    elif current_price < consolidation_price and macd[-1] < macdsignal[-1] and rsi < 50:
+    elif current_price < consolidation_price and macd.iloc[-1]['MACD_12_26_9'] < macd.iloc[-1]['SIGNAL_12_26_9'] and rsi < 50:
         signal = 'sell'
     else:
         signal = 'hold'
@@ -120,8 +122,8 @@ def get_prediction(symbol: str = Query(..., description="The symbol to make pred
         'current_price': current_price,
         'consolidation_price': consolidation_price,
         'rsi': rsi,
-        'macd': macd[-1],
-        'macd_signal': macdsignal[-1],
+        'macd': macd.iloc[-1]['MACD_12_26_9'],
+        'macd_signal': macd.iloc[-1]['SIGNAL_12_26_9'],
         'signal': signal,
         'take_profit': take_profit,
         'stop_loss': stop_loss,
