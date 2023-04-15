@@ -1,160 +1,97 @@
-import os
-from datetime import datetime, timedelta
+from fastapi import FastAPI
+from alpha_vantage.timeseries import TimeSeries
+from alpha_vantage.techindicators import TechIndicators
+from alpha_vantage.newsapi import NewsApi
 import pandas as pd
-import pandas_ta as pta
-import requests
-from bs4 import BeautifulSoup
-from fastapi import FastAPI, Query
-from starlette.responses import JSONResponse
-
-from pydantic import BaseModel
+import numpy as np
 
 app = FastAPI()
+api_key = "B5RQI94JSMH0JOPU"
 
-API_KEY = "B5RQI94JSMH0JOPU"
-
-
-class AlphaVantageError(Exception):
-    pass
-
-
-class PredictionResponse(BaseModel):
-    symbol: str
-    market: str
-    current_price: float
-    consolidation_price: float
-    rsi: float
-    macd: float
-    macd_signal: float
-    signal: str
-    take_profit: float = None
-    stop_loss: float = None
-    last_news: dict = None
+ts = TimeSeries(key=api_key)
+ti = TechIndicators(key=api_key)
+newsapi = NewsApi(key=api_key)
 
 
-def get_macd(symbol, interval, series_type):
-    url = f"https://www.alphavantage.co/query?function=MACD&symbol={symbol}&interval={interval}&series_type={series_type}&apikey={API_KEY}"
-    response = requests.get(url)
-    json_data = response.json()
+@app.get("/trade_signal/{symbol}/{timeframe}")
+async def trade_signal(symbol: str, timeframe: str):
+    current_price, rsi, macd, macd_signal, ema, last_news = await get_market_data(symbol, timeframe)
+    support, resistance = calculate_support_resistance(symbol)
+    market = determine_market_trend(current_price, ema, support, resistance)
+    signal, take_profit, stop_loss, consolidation_price = strategy(symbol, market, current_price, rsi, macd,
+                                                                   macd_signal)
 
-    if "Technical Analysis: MACD" not in json_data:
-        raise AlphaVantageError("Could not fetch MACD data from AlphaVantage. Check your API key and rate limits.")
+    response = {
+        'symbol': symbol,
+        'market': market,
+        'current_price': current_price,
+        'consolidation_price': consolidation_price,
+        'rsi': rsi,
+        'macd': macd,
+        'macd_signal': macd_signal,
+        'signal': signal,
+        'take_profit': take_profit,
+        'stop_loss': stop_loss,
+        'support': support,
+        'resistance': resistance,
+        'last_news': last_news
+    }
 
-    macd_data = json_data["Technical Analysis: MACD"]
-    latest_macd = list(macd_data.values())[0]
-
-    macd = float(latest_macd["MACD"])
-    macd_signal = float(latest_macd["MACD_Signal"])
-
-    return macd, macd_signal
-
-
-def get_ema(symbol, interval, time_period, series_type):
-    url = f"https://www.alphavantage.co/query?function=EMA&symbol={symbol}&interval={interval}&time_period={time_period}&series_type={series_type}&apikey={API_KEY}"
-    response = requests.get(url)
-    json_data = response.json()
-
-    if "Technical Analysis: EMA" not in json_data:
-        raise AlphaVantageError("Could not fetch data from AlphaVantage. Check your API key and rate limits.")
-
-    ema_data = json_data["Technical Analysis: EMA"]
-    last_ema = float(next(iter(ema_data.values()))["EMA"])
-    return last_ema
+    return response
 
 
-def get_current_price(symbol):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={API_KEY}"
-    response = requests.get(url)
-    json_data = response.json()
+async def get_market_data(symbol, timeframe):
+    data, _ = ts.get_quote_endpoint(symbol)
+    current_price = float(data['05. price'])
+    data, _ = ti.get_rsi(symbol, interval=timeframe)
+    rsi = float(data['RSI'])
+    data, _ = ti.get_macd(symbol, interval=timeframe)
+    macd = float(data['MACD_Hist'])
+    macd_signal = float(data['MACD_Signal'])
+    data, _ = ti.get_ema(symbol, interval=timeframe)
+    ema = float(data['EMA'])
+    last_news = newsapi.get_last_news(symbol)
 
-    if "Global Quote" not in json_data:
-        raise AlphaVantageError("Could not fetch data from AlphaVantage. Check your API key and rate limits.")
-
-    current_price = float(json_data["Global Quote"]["05. price"])
-    return current_price
+    return current_price, rsi, macd, macd_signal, ema, last_news
 
 
-@app.get("/prediction", response_model=PredictionResponse)
-async def get_prediction(
-        symbol: str = Query(..., description="The symbol to make predictions for"),
-        market: str = Query(...,
-                            description="The market the symbol belongs to (e.g. forex, crypto, metals, nasdaq, nyse)"),
-        timeframe: str = Query("15min",
-                               description="The timeframe for the candlestick data (e.g. 1min, 5min, 15min, 30min, 60min)"),
-):
-    # get candles data
-    try:
-        current_price = get_current_price(symbol)
+def calculate_support_resistance(symbol):
+    data, _ = ts.get_daily(symbol, outputsize='full')
+    df = pd.DataFrame(data).T
+    df.index = pd.to_datetime(df.index)
+    df['max'] = df['2. high'].rolling(window=20, min_periods=1).max()
+    df['min'] = df['3. low'].rolling(window=20, min_periods=1).min()
+    support = df['min'].iloc[-1]
+    resistance = df['max'].iloc[-1]
 
-        # get MACD and MACD signal
-        try:
-            macd, macd_signal = get_macd(symbol, timeframe, "close")
+    return float(support), float(resistance)
 
-        except AlphaVantageError as e:
-            return JSONResponse(status_code=500, content={"detail": str(e)})
 
-        # get EMA data
-        try:
-            ema_short = get_ema(symbol, timeframe, "50", "close")
-            ema_long = get_ema(symbol, timeframe, "100", "close")
+def determine_market_trend(current_price, ema, support, resistance):
+    if current_price > ema and current_price > support:
+        return 'upside'
+    elif current_price < ema and current_price < resistance:
+        return 'downside'
+    else:
+        return 'consolidation'
 
-        except AlphaVantageError as e:
-            return JSONResponse(status_code=500, content={"detail": str(e)})
 
-            # get RSI
-        try:
-            url = f"https://www.alphavantage.co/query?function=RSI&symbol={symbol}&interval={timeframe}&time_period=14&series_type=close&apikey={API_KEY}"
-            response = requests.get(url)
-            json_data = response.json()
+def strategy(symbol, market, current_price, rsi, macd, macd_signal):
+    consolidation_price = 0
+    signal = None
+    take_profit = 0
+    stop_loss = 0
 
-            if "Technical Analysis: RSI" not in json_data:
-                raise AlphaVantageError(
-                    "Could not fetch RSI data from AlphaVantage. Check your API key and rate limits.")
+    support, resistance = calculate_support_resistance(symbol)
+    sniper_range = 0.005
 
-            rsi_data = json_data["Technical Analysis: RSI"]
-            latest_rsi = list(rsi_data.values())[0]
-            rsi = float(latest_rsi["RSI"])
+    if market == 'upside' and (current_price - support) / support < sniper_range:
+        signal = 'buy'
+        take_profit = current_price * 1.03
+        stop_loss = current_price * 0.99
+    elif market == 'downside' and (resistance - current_price) / resistance < sniper_range:
+        signal = 'sell'
+        take_profit = current_price * 0.97
+        stop_loss = current_price * 1.01
 
-        except AlphaVantageError as e:
-            return JSONResponse(status_code=500, content={"detail": str(e)})
-
-        consolidation_price = (ema_short + ema_long) / 2
-
-        last_news = None
-
-        # determine trading signal
-
-        if current_price > consolidation_price and macd > macd_signal and rsi > 50:
-            signal = 'buy'
-        elif current_price < consolidation_price and macd < macd_signal and rsi < 50:
-            signal = 'sell'
-        else:
-            signal = 'hold'
-
-        # calculate take profit and stop loss
-        if signal in ('buy', 'sell'):
-            take_profit = current_price * 1.03
-            stop_loss = current_price * 0.99
-        else:
-            take_profit = None
-            stop_loss = None
-
-        # construct response
-        response = {
-            'symbol': symbol,
-            'market': market,
-            'current_price': current_price,
-            'consolidation_price': consolidation_price,
-            'rsi': rsi,
-            'macd': macd,
-            'macd_signal': macd_signal,
-            'signal': signal,
-            'take_profit': take_profit,
-            'stop_loss': stop_loss,
-            'last_news': last_news
-        }
-
-        return response
-
-    except AlphaVantageError as e:
-        return JSONResponse(status_code=500, content={"detail": str(e)})
+    return signal, take_profit, stop_loss, consolidation_price
