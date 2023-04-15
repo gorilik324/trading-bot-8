@@ -1,19 +1,18 @@
-FROM python:3.10
+FROM ubuntu:20.04
 
-WORKDIR /app
-
-RUN apt-get update && apt-get upgrade -y && \
+RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y software-properties-common && \
-    sed -i 's/^#\s*\(deb.*universe\)$/\1/g' /etc/apt/sources.list && \
+    echo "deb http://archive.ubuntu.com/ubuntu focal main universe" >> /etc/apt/sources.list && \
+    echo "deb-src http://archive.ubuntu.com/ubuntu focal main universe" >> /etc/apt/sources.list && \
     apt-get update && \
     apt-get install -y libta-lib-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
-RUN pip install --upgrade pip
-
-RUN pip install -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
 
 COPY app app
 
