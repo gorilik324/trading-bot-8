@@ -30,6 +30,23 @@ class PredictionResponse(BaseModel):
     last_news: dict = None
 
 
+def get_ema(symbol, timeframe, length):
+    api_key = "B5RQI94JSMH0JOPU"
+    url = f"https://www.alphavantage.co/query?function=EMA&symbol={symbol}&interval={timeframe}&time_period={length}&series_type=close&apikey={api_key}"
+    response = requests.get(url)
+    json_data = response.json()
+
+    if 'Technical Analysis: EMA' not in json_data:
+        raise AlphaVantageError("Could not fetch EMA data from AlphaVantage. Check your API key and rate limits.")
+
+    data = json_data['Technical Analysis: EMA']
+    data = {datetime.fromisoformat(k): float(v['EMA']) for k, v in data.items()}
+    data = pd.Series(data)
+    data.sort_index(inplace=True)
+    data.name = f'EMA_{length}'
+    return data
+
+
 def get_candles(symbol, timeframe):
     url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={timeframe}&outputsize=full&apikey=B5RQI94JSMH0JOPU"
     response = requests.get(url)
@@ -104,8 +121,9 @@ async def get_prediction(
         candles['close'] = closes
 
         macd = pta.macd(candles['close'], fastperiod=12, slowperiod=26, signalperiod=9)
-        ema_short = pta.ema(candles['close'], length=50).iloc[-1]
-        ema_long = pta.ema(candles['close'], length=100).iloc[-1]
+        ema_short = get_ema(symbol, timeframe, 50).iloc[-1]
+        ema_long = get_ema(symbol, timeframe, 100).iloc[-1]
+
         current_price = closes[-1]
         consolidation_price = (ema_short + ema_long) / 2
 
