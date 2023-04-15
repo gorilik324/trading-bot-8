@@ -4,7 +4,9 @@ import pandas as pd
 import pandas_ta as pta
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Query, JSONResponse
+from fastapi import FastAPI, Query
+from starlette.responses import JSONResponse
+
 from pydantic import BaseModel
 
 app = FastAPI()
