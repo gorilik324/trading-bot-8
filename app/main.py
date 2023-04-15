@@ -30,82 +30,29 @@ class PredictionResponse(BaseModel):
     last_news: dict = None
 
 
-def get_ema(symbol, timeframe, length):
-    api_key = "B5RQI94JSMH0JOPU"
-    url = f"https://www.alphavantage.co/query?function=EMA&symbol={symbol}&interval={timeframe}&time_period={length}&series_type=close&apikey={api_key}"
+def get_ema(symbol, interval, time_period, series_type):
+    url = f"https://www.alphavantage.co/query?function=EMA&symbol={symbol}&interval={interval}&time_period={time_period}&series_type={series_type}&apikey=B5RQI94JSMH0JOPU"
     response = requests.get(url)
     json_data = response.json()
 
-    if 'Technical Analysis: EMA' not in json_data:
-        raise AlphaVantageError("Could not fetch EMA data from AlphaVantage. Check your API key and rate limits.")
-
-    data = json_data['Technical Analysis: EMA']
-    data = {datetime.fromisoformat(k): float(v['EMA']) for k, v in data.items()}
-    data = pd.Series(data)
-    data.sort_index(inplace=True)
-    data.name = f'EMA_{length}'
-    return data
-
-
-def get_candles(symbol, timeframe):
-    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={timeframe}&outputsize=full&apikey=B5RQI94JSMH0JOPU"
-    response = requests.get(url)
-    json_data = response.json()
-    time_series_key = f'Time Series ({timeframe})'
-
-    if time_series_key not in json_data:
+    if "Technical Analysis: EMA" not in json_data:
         raise AlphaVantageError("Could not fetch data from AlphaVantage. Check your API key and rate limits.")
 
-    data = json_data[time_series_key]
-    data = {datetime.fromisoformat(k): {k2.split()[-1]: float(v2) for k2, v2 in v.items()} for k, v in data.items()}
-    data = pd.DataFrame.from_dict(data, orient='index')
-    data.sort_index(inplace=True)
-    data.index.name = 'timestamp'
-    data.reset_index(inplace=True)
-    return data
+    ema_data = json_data["Technical Analysis: EMA"]
+    last_ema = float(next(iter(ema_data.values()))["EMA"])
+    return last_ema
 
 
-def get_news(symbol, market):
-    if market == 'nasdaq':
-        news_url = f"https://www.nasdaq.com/market-activity/stocks/{symbol}/news-headlines"
-    elif market == 'nyse':
-        news_url = f"https://www.nyse.com/quote/{symbol}/news"
-    elif market == 'forex':
-        news_url = f"https://www.dailyfx.com/{symbol}-news"
-    elif market == 'crypto':
-        news_url = f"https://cointelegraph.com/tags/{symbol}-news"
-    elif market == 'metals':
-        news_url = f"https://www.kitco.com/news/{symbol}-news.html"
-    else:
-        raise ValueError(f"Unsupported market: {market}")
+def get_current_price(symbol):
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey=B5RQI94JSMH0JOPU"
+    response = requests.get(url)
+    json_data = response.json()
 
-    response = requests.get(news_url, headers={'User-Agent': 'Mozilla/5.0'})
-    soup = BeautifulSoup(response.text, 'html.parser')
-    if market in ['nasdaq', 'nyse']:
-        news_items = soup.find_all('a', class_='quote-news-headlines__link') if market == 'nasdaq' else soup.find_all(
-            'a', class_='news-link')
-        news_timestamps = soup.find_all('span',
-                                        class_='quote-news-headlines__date') if market == 'nasdaq' else soup.find_all(
-            'time')
-    else:
-        news_items = soup.find_all('a', class_='post-card-title')
-        news_timestamps = soup.find_all('time')
+    if "Global Quote" not in json_data:
+        raise AlphaVantageError("Could not fetch data from AlphaVantage. Check your API key and rate limits.")
 
-    news_list = []
-    for i, item in enumerate(news_items):
-        if market in ['nasdaq', 'nyse']:
-            timestamp = datetime.strptime(news_timestamps[i].text.strip(),
-                                          "%m/%d/%Y %I:%M%p") if market == 'nasdaq' else datetime.fromisoformat(
-                news_timestamps[i]['datetime'])
-        else:
-            timestamp = datetime.strptime(news_timestamps[i]['datetime'], '%Y-%m-%dT%H:%M:%S%z')
-        news_list.append({
-            'title': item.text.strip(),
-            'url': item['href'],
-            'timestamp': timestamp
-        })
-
-    return news_list
+    current_price = float(json_data["Global Quote"]["05. price"])
+    return current_price
 
 
 @app.get("/prediction", response_model=PredictionResponse)
@@ -116,23 +63,20 @@ async def get_prediction(
 ):
     # get candles data
     try:
-        candles = get_candles(symbol, timeframe)
-        closes = candles['close'].values.astype(float)
-        candles['close'] = closes
+        current_price = get_current_price(symbol)
 
-        macd = pta.macd(candles['close'], fastperiod=12, slowperiod=26, signalperiod=9)
-        ema_short = get_ema(symbol, timeframe, 50).iloc[-1]
-        ema_long = get_ema(symbol, timeframe, 100).iloc[-1]
-
-        current_price = closes[-1]
+        # calculate technical indicators
+        macd = pta.macd(pd.Series([current_price]), fastperiod=12, slowperiod=26, signalperiod=9)
+        ema_short = pta.ema(pd.Series([current_price]), length=50).iloc[-1]
+        ema_long = pta.ema(pd.Series([current_price]), length=100).iloc[-1]
         consolidation_price = (ema_short + ema_long) / 2
 
         # get news data
-        news = get_news(symbol, market)
-        last_news = news[0] if len(news) > 0 else None
+        last_news = None
 
         # determine trading signal
-        rsi = pta.rsi(candles['close'], length=14).iloc[-1]
+        # determine trading signal
+        rsi = pta.rsi(pd.Series([current_price]), length=14).iloc[-1]
         if current_price > consolidation_price and macd.iloc[-1]['MACD_12_26_9'] > macd.iloc[-1][
             'MACDh_12_26_9'] and rsi > 50:
             signal = 'buy'
