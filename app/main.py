@@ -1,7 +1,9 @@
+import requests
+import json
+
 from fastapi import FastAPI
 from alpha_vantage.timeseries import TimeSeries
 from alpha_vantage.techindicators import TechIndicators
-from alpha_vantage.economic_indicator import EconomicIndicator
 import pandas as pd
 import numpy as np
 
@@ -10,7 +12,6 @@ api_key = "B5RQI94JSMH0JOPU"
 
 ts = TimeSeries(key=api_key)
 ti = TechIndicators(key=api_key)
-ei = EconomicIndicator(key=api_key)
 
 
 @app.get("/trade_signal/{symbol}/{timeframe}")
@@ -102,17 +103,16 @@ def strategy(symbol, market, current_price, rsi, macd, macd_signal, support, res
 
 
 def get_cpi_nfp_data():
-    cpi_data, _ = ei.get_cpi(interval='monthly')
-    nfp_data, _ = ei.get_nonfarm_payroll()
+    cpi_url = f"https://www.alphavantage.co/query?function=CPI&interval=monthly&apikey={api_key}"
+    nfp_url = f"https://www.alphavantage.co/query?function=NONFARM_PAYROLL&apikey={api_key}"
+
+    cpi_response = requests.get(cpi_url)
+    nfp_response = requests.get(nfp_url)
+
+    cpi_data = json.loads(cpi_response.text)
+    nfp_data = json.loads(nfp_response.text)
 
     latest_cpi = float(cpi_data['CPI'][0])
     latest_nfp = float(nfp_data['Nonfarm_Payroll'][0])
 
     return latest_cpi, latest_nfp
-
-
-def analyze_cpi_nfp_impact(cpi, nfp):
-    cpi_impact = "positive" if cpi > 0 else "negative"
-    nfp_impact = "positive" if nfp > 0 else "negative"
-
-    return {"cpi_impact": cpi_impact, "nfp_impact": nfp_impact}
