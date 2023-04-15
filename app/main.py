@@ -116,10 +116,10 @@ async def get_prediction(
         # determine trading signal
         rsi = pta.rsi(candles['close'], length=14).iloc[-1]
         if current_price > consolidation_price and macd.iloc[-1]['MACD_12_26_9'] > macd.iloc[-1][
-            'SIGNAL_12_26_9'] and rsi > 50:
+            'MACDh_12_26_9'] and rsi > 50:
             signal = 'buy'
         elif current_price < consolidation_price and macd.iloc[-1]['MACD_12_26_9'] < macd.iloc[-1][
-            'SIGNAL_12_26_9'] and rsi < 50:
+            'MACDh_12_26_9'] and rsi < 50:
             signal = 'sell'
         else:
             signal = 'hold'
@@ -127,7 +127,7 @@ async def get_prediction(
         # calculate take profit and stop loss
         if signal in ('buy', 'sell'):
             take_profit = current_price * 1.06
-            stop_loss = current_price * 0.97
+            stop_loss = current_price * 0.98
         else:
             take_profit = None
             stop_loss = None
@@ -140,7 +140,7 @@ async def get_prediction(
             'consolidation_price': consolidation_price,
             'rsi': rsi,
             'macd': macd.iloc[-1]['MACD_12_26_9'],
-            'macd_signal': macd.iloc[-1]['SIGNAL_12_26_9'],
+            'macd_signal': macd.iloc[-1]['MACDh_12_26_9'],
             'signal': signal,
             'take_profit': take_profit,
             'stop_loss': stop_loss,
