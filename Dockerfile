@@ -1,13 +1,6 @@
-FROM ubuntu:18.04
+FROM docker.io/bitnami/python:3.10.3-debian-10-r38
 
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y software-properties-common && \
-    echo "deb http://archive.ubuntu.com/ubuntu focal main universe" >> /etc/apt/sources.list && \
-    echo "deb-src http://archive.ubuntu.com/ubuntu focal main universe" >> /etc/apt/sources.list && \
-    apt-get update && \
-    apt-get install -y libta-lib-dev && \
-    rm -rf /var/lib/apt/lists/*
+WORKDIR /app
 
 COPY requirements.txt .
 
