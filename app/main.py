@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+API_KEY = "B5RQI94JSMH0JOPU"
+
 
 class AlphaVantageError(Exception):
     pass
@@ -30,8 +32,25 @@ class PredictionResponse(BaseModel):
     last_news: dict = None
 
 
+def get_macd(symbol, interval, series_type):
+    url = f"https://www.alphavantage.co/query?function=MACD&symbol={symbol}&interval={interval}&series_type={series_type}&apikey={API_KEY}"
+    response = requests.get(url)
+    json_data = response.json()
+
+    if "Technical Analysis: MACD" not in json_data:
+        raise AlphaVantageError("Could not fetch MACD data from AlphaVantage. Check your API key and rate limits.")
+
+    macd_data = json_data["Technical Analysis: MACD"]
+    latest_macd = list(macd_data.values())[0]
+
+    macd = float(latest_macd["MACD"])
+    macd_signal = float(latest_macd["MACD_Signal"])
+
+    return macd, macd_signal
+
+
 def get_ema(symbol, interval, time_period, series_type):
-    url = f"https://www.alphavantage.co/query?function=EMA&symbol={symbol}&interval={interval}&time_period={time_period}&series_type={series_type}&apikey=B5RQI94JSMH0JOPU"
+    url = f"https://www.alphavantage.co/query?function=EMA&symbol={symbol}&interval={interval}&time_period={time_period}&series_type={series_type}&apikey={API_KEY}"
     response = requests.get(url)
     json_data = response.json()
 
@@ -44,7 +63,7 @@ def get_ema(symbol, interval, time_period, series_type):
 
 
 def get_current_price(symbol):
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey=B5RQI94JSMH0JOPU"
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={API_KEY}"
     response = requests.get(url)
     json_data = response.json()
 
@@ -65,31 +84,39 @@ async def get_prediction(
     try:
         current_price = get_current_price(symbol)
 
-        # calculate technical indicators
-        macd = pta.macd(pd.Series([current_price]), fastperiod=12, slowperiod=26, signalperiod=9)
-        ema_short = pta.ema(pd.Series([current_price]), length=50).iloc[-1]
-        ema_long = pta.ema(pd.Series([current_price]), length=100).iloc[-1]
+        # get MACD and MACD signal
+        try:
+            macd, macd_signal = get_macd(symbol, timeframe, "close")
+
+        except AlphaVantageError as e:
+            return JSONResponse(status_code=500, content={"detail": str(e)})
+
+        # get EMA data
+        try:
+            ema_short = get_ema(symbol, timeframe, "50", "close")
+            ema_long = get_ema(symbol, timeframe, "100", "close")
+
+        except AlphaVantageError as e:
+            return JSONResponse(status_code=500, content={"detail": str(e)})
+
         consolidation_price = (ema_short + ema_long) / 2
 
-        # get news data
         last_news = None
 
         # determine trading signal
         # determine trading signal
         rsi = pta.rsi(pd.Series([current_price]), length=14).iloc[-1]
-        if current_price > consolidation_price and macd.iloc[-1]['MACD_12_26_9'] > macd.iloc[-1][
-            'MACDh_12_26_9'] and rsi > 50:
+        if current_price > consolidation_price and macd > macd_signal and rsi > 50:
             signal = 'buy'
-        elif current_price < consolidation_price and macd.iloc[-1]['MACD_12_26_9'] < macd.iloc[-1][
-            'MACDh_12_26_9'] and rsi < 50:
+        elif current_price < consolidation_price and macd < macd_signal and rsi < 50:
             signal = 'sell'
         else:
             signal = 'hold'
 
         # calculate take profit and stop loss
         if signal in ('buy', 'sell'):
-            take_profit = current_price * 1.06
-            stop_loss = current_price * 0.98
+            take_profit = current_price * 1.03
+            stop_loss = current_price * 0.99
         else:
             take_profit = None
             stop_loss = None
@@ -101,8 +128,8 @@ async def get_prediction(
             'current_price': current_price,
             'consolidation_price': consolidation_price,
             'rsi': rsi,
-            'macd': macd.iloc[-1]['MACD_12_26_9'],
-            'macd_signal': macd.iloc[-1]['MACDh_12_26_9'],
+            'macd': macd,
+            'macd_signal': macd_signal,
             'signal': signal,
             'take_profit': take_profit,
             'stop_loss': stop_loss,
