@@ -2,24 +2,16 @@ FROM python:3.10
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    gfortran \
-    libatlas-base-dev \
-    libffi-dev \
-    libssl-dev \
-    libta-lib-dev \
-    python3-dev \
-    python3-pip \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --upgrade pip
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y software-properties-common && \
+    add-apt-repository universe && \
+    apt-get update && \
+    apt-get install -y libta-lib-dev
 
 COPY requirements.txt .
 
-RUN pip install -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
 
 COPY app app
 
