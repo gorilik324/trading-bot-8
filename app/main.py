@@ -22,8 +22,8 @@ async def trade_signal(symbol: str, timeframe: str):
         market = determine_market_trend(current_price, ema, support, resistance)
         signal, take_profit, stop_loss, consolidation_price = strategy(symbol, market, current_price, rsi, macd,
                                                                        macd_signal, support, resistance)
-        latest_cpi, latest_nfp = None, None  # get_cpi_nfp_data()
-        cpi_nfp_impact = None  # analyze_cpi_nfp_impact(latest_cpi, latest_nfp)
+        latest_cpi, latest_nfp = get_cpi_nfp_data()
+        cpi_nfp_impact = analyze_cpi_nfp_impact(latest_cpi, latest_nfp)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
