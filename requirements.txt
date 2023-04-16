@@ -3,4 +3,4 @@ uvicorn==0.15.0
 alpha_vantage==2.3.1
 pandas==1.3.4
 fredapi==0.4.3
-find-patterns==0.0.4
+find-patterns
