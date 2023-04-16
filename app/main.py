@@ -1,11 +1,12 @@
-import requests
 import json
-from fastapi import HTTPException
-from fastapi import FastAPI
-from alpha_vantage.timeseries import TimeSeries
-from alpha_vantage.techindicators import TechIndicators
+
 import pandas as pd
-import numpy as np
+import requests
+from alpha_vantage.techindicators import TechIndicators
+from alpha_vantage.timeseries import TimeSeries
+from fastapi import FastAPI
+from fastapi import HTTPException
+from find_patterns import find_patterns, Patterns
 
 app = FastAPI()
 api_key = "B5RQI94JSMH0JOPU"
@@ -20,8 +21,9 @@ async def trade_signal(symbol: str, timeframe: str):
         current_price, rsi, macd, macd_signal, ema = await get_market_data(symbol, timeframe)
         support, resistance = calculate_support_resistance(symbol)
         market = determine_market_trend(current_price, ema, support, resistance)
+        patterns = find_chart_patterns(symbol)
         signal, take_profit, stop_loss, consolidation_price = strategy(symbol, market, current_price, rsi, macd,
-                                                                       macd_signal, support, resistance)
+                                                                       macd_signal, support, resistance, patterns)
         latest_cpi, latest_nfp = get_cpi_nfp_data()
         cpi_nfp_impact = analyze_cpi_nfp_impact(latest_cpi, latest_nfp)
     except ValueError as e:
@@ -42,7 +44,8 @@ async def trade_signal(symbol: str, timeframe: str):
         'resistance': resistance,
         'cpi': latest_cpi,
         'nfp': latest_nfp,
-        'cpi_nfp_impact': cpi_nfp_impact
+        'cpi_nfp_impact': cpi_nfp_impact,
+        'patterns': patterns
     }
 
     return response
@@ -83,7 +86,18 @@ def determine_market_trend(current_price, ema, support, resistance):
         return 'consolidation'
 
 
-def strategy(symbol, market, current_price, rsi, macd, macd_signal, support, resistance):
+def find_chart_patterns(symbol):
+    data, _ = ts.get_daily(symbol, outputsize='full')
+    df = pd.DataFrame(data).T
+    df.index = pd.to_datetime(df.index)
+    df['close'] = df['4. close'].astype(float)
+    df['high'] = df['2. high'].astype(float)
+    df['low'] = df['3. low'].astype(float)
+    patterns = find_patterns(df, patterns=[Patterns.DOUBLE_TOP, Patterns.DOUBLE_BOTTOM])
+    return patterns
+
+
+def strategy(symbol, market, current_price, rsi, macd, macd_signal, support, resistance, patterns):
     signal, take_profit, stop_loss, consolidation_price = None, None, None, None
 
     if market == 'consolidation':
@@ -100,6 +114,15 @@ def strategy(symbol, market, current_price, rsi, macd, macd_signal, support, res
         signal = 'sell'
         take_profit = current_price * 0.97
         stop_loss = current_price * 1.01
+
+    if Patterns.DOUBLE_TOP in patterns:
+        signal = 'sell'
+        take_profit = current_price * 0.97
+        stop_loss = current_price * 1.01
+    elif Patterns.DOUBLE_BOTTOM in patterns:
+        signal = 'buy'
+        take_profit = current_price * 1.03
+        stop_loss = current_price * 0.99
 
     return signal, take_profit, stop_loss, consolidation_price
 
